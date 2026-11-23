@@ -1,163 +1,202 @@
-"""
-Модуль: lexer.py
-Описание: Лексический анализатор HTML для учебного проекта браузера.
-Реализует посимвольный разбор с использованием глобальной переменной
-для текущего символа (lookahead) и выдачу токенов по одному за вызов.
-"""
+"""Самописный посимвольный лексер для HTML-документов и фрагментов."""
 
-# 6. Глобальная переменная для хранения текущего (последнего прочитанного) символа
+from html import unescape
+
+
 current_char = None
-
-# Внутренние служебные переменные модуля
 _html_source = ""
 _pos = 0
-_length = 0
 _in_tag = False
 _in_string = False
 _target_quote = None
+_raw_text_tag = None
+_tag_name = None
+_closing_tag = False
+_after_equals = False
+
+
+def _update_current_char() -> None:
+    global current_char
+    current_char = _html_source[_pos] if _pos < len(_html_source) else None
 
 
 def init_lexer(html_text: str) -> None:
-    """
-    Инициализирует лексер новой HTML-строкой.
-    Сбрасывает указатель и читает первый символ (смотрит на 1 символ вперед).
-    """
-    global _html_source, _pos, _length, current_char, _in_tag, _in_string, _target_quote
+    """Начать разбор новой HTML-строки и сбросить состояние лексера."""
+    global _html_source, _pos, _in_tag, _in_string, _target_quote
+    global _raw_text_tag, _tag_name, _closing_tag, _after_equals
+    if not isinstance(html_text, str):
+        raise TypeError("HTML должен быть строкой")
     _html_source = html_text
     _pos = 0
-    _length = len(html_text)
     _in_tag = False
     _in_string = False
     _target_quote = None
-
-    # 5. Смотрим на 1 символ вперед при старте
-    if _length > 0:
-        current_char = _html_source[_pos]
-        _pos += 1
-    else:
-        current_char = None
+    _raw_text_tag = None
+    _tag_name = None
+    _closing_tag = False
+    _after_equals = False
+    _update_current_char()
 
 
-def _advance() -> None:
-    """
-    Сдвигает указатель на 1 символ вперед и обновляет глобальную переменную current_char.
-    """
-    global _pos, current_char, _length
-    if _pos < _length:
-        current_char = _html_source[_pos]
-        _pos += 1
-    else:
-        current_char = None
+def _advance(count: int = 1) -> None:
+    global _pos
+    _pos = min(_pos + count, len(_html_source))
+    _update_current_char()
 
 
-def _is_stop_char(ch: str) -> bool:
-    """
-    Проверяет, является ли переданный символ разделителем (стоп-символом)
-    для имен тегов и атрибутов.
-    """
-    return ch in ' \t\r\n=/><"\''
+def _is_tag_start(position: int) -> bool:
+    """Проверить, начинается ли в позиции открывающий HTML-маркер."""
+    if position >= len(_html_source) or _html_source[position] != "<":
+        return False
+    if _html_source.startswith("<!--", position) or _html_source.startswith("<!", position):
+        return True
+    next_pos = position + 1
+    if next_pos < len(_html_source) and _html_source[next_pos] == "/":
+        next_pos += 1
+    return next_pos < len(_html_source) and _html_source[next_pos].isalpha()
+
+
+def _read_text() -> tuple[str, str]:
+    """Считать текст до следующего распознаваемого маркера тега."""
+    global _raw_text_tag
+    start = _pos
+    if _raw_text_tag:
+        marker = "</" + _raw_text_tag
+        lower_source = _html_source.lower()
+        end = lower_source.find(marker, _pos)
+        if end < 0:
+            end = len(_html_source)
+        value = _html_source[start:end]
+        tag = _raw_text_tag
+        if tag in {"textarea", "title"}:
+            value = unescape(value)
+        _advance(end - _pos)
+        if end < len(_html_source):
+            _raw_text_tag = None
+        return "TEXT", value
+
+    while _pos < len(_html_source) and not _is_tag_start(_pos):
+        _advance()
+    value = unescape(_html_source[start:_pos])
+    return "TEXT", value
 
 
 def get_next_token():
-    """
-    3. Возвращает ровно ОДНУ лексему за один вызов.
-    Использует глобальную переменную current_char.
-    Возвращает пару (тип_токена, значение) или None, если текст закончился.
-    """
-    global _in_tag, _in_string, _target_quote, current_char
+    """Вернуть следующий токен ``(тип, значение)`` или ``None`` в конце ввода."""
+    global _in_tag, _in_string, _target_quote, _raw_text_tag
+    global _tag_name, _closing_tag, _after_equals
 
-    while current_char is not None:
-        # Если мы внутри кавычек (значение атрибута)
+    while _pos < len(_html_source):
         if _in_string:
             if current_char == _target_quote:
-                _in_string = False
-                q = _target_quote
-                _target_quote = None
+                quote = _target_quote
                 _advance()
-                return ("QUOTE", q)
-            else:
-                val = ""
-                while current_char is not None and current_char != _target_quote:
-                    val += current_char
-                    _advance()
-                return ("STRING_VAL", val)
-
-        # Пропускаем пробелы и переносы вне тегов
-        if not _in_tag and current_char in ' \t\r\n':
-            _advance()
-            continue
-
-        # Пропускаем пробелы внутри тегов
-        if _in_tag and current_char in ' \t\r\n':
-            _advance()
-            continue
+                _in_string = False
+                _target_quote = None
+                return "QUOTE", quote
+            start = _pos
+            while _pos < len(_html_source) and current_char != _target_quote:
+                _advance()
+            return "STRING_VAL", unescape(_html_source[start:_pos])
 
         if not _in_tag:
-            # 1. Комментарии <!-- ... -->
-            if current_char == '<' and _html_source.startswith("<!--", _pos - 1):
-                comment_text = "<!--"
-                _advance()
-                _advance()
-                _advance()
-                _advance()
-                while current_char is not None:
-                    comment_text += current_char
-                    if comment_text.endswith("-->"):
-                        _advance()
-                        break
-                    _advance()
-                return ("COMMENT", comment_text)
+            if _html_source.startswith("<!--", _pos):
+                start = _pos + 4
+                end = _html_source.find("-->", start)
+                if end < 0:
+                    value = _html_source[start:]
+                    _advance(len(_html_source) - _pos)
+                else:
+                    value = _html_source[start:end]
+                    _advance(end + 3 - _pos)
+                return "COMMENT", value
 
-            # 2. Открывающий тег <
-            if current_char == '<':
+            if _html_source[_pos:_pos + 9].lower().startswith("<!doctype"):
+                start = _pos + 2
+                quote = None
+                end = start
+                while end < len(_html_source):
+                    char = _html_source[end]
+                    if quote:
+                        if char == quote:
+                            quote = None
+                    elif char in ('"', "'"):
+                        quote = char
+                    elif char == ">":
+                        break
+                    end += 1
+                value = _html_source[start:end]
+                _advance(min(end + 1, len(_html_source)) - _pos)
+                return "DOCTYPE", value
+
+            if _html_source.startswith("<![CDATA[", _pos):
+                start = _pos + 9
+                end = _html_source.find("]]>", start)
+                if end < 0:
+                    value = _html_source[start:]
+                    _advance(len(_html_source) - _pos)
+                else:
+                    value = _html_source[start:end]
+                    _advance(end + 3 - _pos)
+                return "TEXT", value
+
+            if _is_tag_start(_pos):
                 _advance()
                 _in_tag = True
-                return ("TAG_OPEN", "<")
+                _tag_name = None
+                _closing_tag = False
+                return "TAG_OPEN", "<"
 
-            # 3. Текст между тегами
-            text_val = ""
-            while current_char is not None and current_char != '<':
-                text_val += current_char
-                _advance()
+            return _read_text()
 
-            cleaned = text_val.strip()
-            if cleaned:
-                return ("TEXT", cleaned)
+        if current_char in " \t\r\n\f":
+            _advance()
             continue
-
-        else:
-            # Внутри тега
-            # 4. Слэш /
-            if current_char == '/':
+        if current_char == ">":
+            _advance()
+            _in_tag = False
+            if not _closing_tag and _tag_name:
+                name = _tag_name.lower()
+                if name in {"script", "style", "textarea", "title"}:
+                    _raw_text_tag = name
+            return "TAG_CLOSE", ">"
+        if current_char == "/" and not _after_equals:
+            if not _after_equals and (_tag_name is None or (_pos + 1 < len(_html_source) and _html_source[_pos + 1] == ">")):
+                if _tag_name is None:
+                    _closing_tag = True
                 _advance()
-                return ("SLASH", "/")
+                return "SLASH", "/"
+        if current_char == "=":
+            _advance()
+            _after_equals = True
+            return "EQUALS", "="
+        if current_char in ('"', "'"):
+            _after_equals = False
+            _target_quote = current_char
+            _in_string = True
+            quote = current_char
+            _advance()
+            return "QUOTE", quote
 
-            # 5. Закрывающая скобка >
-            if current_char == '>':
-                _advance()
-                _in_tag = False
-                return ("TAG_CLOSE", ">")
+        start = _pos
+        while _pos < len(_html_source):
+            if current_char in " \t\r\n\f=><\"'":
+                break
+            if current_char == "/" and not _after_equals and _pos + 1 < len(_html_source) and _html_source[_pos + 1] == ">":
+                break
+            _advance()
+        if start == _pos:
+            # Сохраняем неожиданный символ и продолжаем, не зацикливаясь.
+            value = current_char
+            _advance()
+            return "NAME", value
 
-            # 6. Знак равенства =
-            if current_char == '=':
-                _advance()
-                return ("EQUALS", "=")
-
-            # 7. Кавычки (" или ')
-            if current_char in ('"', "'"):
-                _target_quote = current_char
-                _in_string = True
-                q = current_char
-                _advance()
-                return ("QUOTE", q)
-
-            # 8. Имена тегов или атрибутов
-            name_val = ""
-            while current_char is not None and not _is_stop_char(current_char):
-                name_val += current_char
-                _advance()
-
-            if name_val:
-                return ("NAME", name_val)
+        value = _html_source[start:_pos]
+        _after_equals = False
+        if _tag_name is None and value != "/":
+            if value:
+                _tag_name = value
+        return "NAME", value
 
     return None
+
