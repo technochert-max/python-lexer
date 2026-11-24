@@ -23,10 +23,10 @@ def extract_text(root: Node) -> str:
         if node.kind == "text":
             pieces.append(node.text or "")
             return
-        if node.kind != "element":
+        if node.kind not in {"document", "element"}:
             return
 
-        name = (node.name or "").lower()
+        name = (node.name or "").lower() if node.kind == "element" else ""
         if name in _IGNORED_ELEMENTS:
             return
         if name in _BLOCK_ELEMENTS:
