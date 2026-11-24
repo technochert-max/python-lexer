@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head><meta charset="UTF-8"><title>Форма</title></head>
+<body>
+    <h1>Форма обратной связи</h1>
+    <form action="/send" method="post">
+        <label for="username">Имя:</label>
+        <input id="username" name="username" type="text" placeholder="Введите имя">
+        <label for="email">Электронная почта:</label>
+        <input id="email" name="email" type="email" required>
+        <label><input type="checkbox" name="agree" checked> Согласен с условиями</label>
+        <select name="topic">
+            <option value="support">Поддержка</option>
+            <option value="feedback">Отзыв</option>
+        </select>
+        <textarea name="message" rows="4">Текст сообщения</textarea>
+        <button type="submit">Отправить</button>
+    </form>
+</body>
+</html>
