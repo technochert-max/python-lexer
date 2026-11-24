@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Void elements and raw text</title>
+    <style>
+        body { font-family: sans-serif; }
+        .notice { color: navy; }
+    </style>
+</head>
+<body>
+    <h1>Edge cases</h1>
+    <hr>
+    <p class="notice">Line one<br>Line two</p>
+    <input type="text" value="sample">
+    <script>
+        const message = "<div>Это строка, а не HTML-элемент</div>";
+        if (1 < 2) console.log(message);
+    </script>
+</body>
+</html>
